@@ -1,0 +1,14 @@
+{
+    "$schema": "https://moddbcdn.vintagestory.at/schema/modinfo.latest.json",
+    "type": "Code",
+    "modid": "lightmyrod",
+    "name": "Light My Rod",
+    "authors": [
+        "Psyloh"
+    ],
+    "description": "Check your lightning rod's protection area!",
+    "version": "1.0.0",
+    "dependencies": {
+        "game": "1.22.0-rc.4"
+    }
+}
