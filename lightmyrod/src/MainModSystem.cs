@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.CommandAbbr;
 using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
 using Vintagestory.API.Util;
+using Vintagestory.Client.NoObf;
 
 namespace LightMyRod
 {
@@ -48,13 +50,11 @@ namespace LightMyRod
 		}
 		readonly Dictionary<string, PlayerState> _playerStates = [];
 		//TODO: save and load states
-		public override void Start(ICoreAPI api)
-		{
-			ApiHelper.Api = api;
-		}
 
 		public override void StartServerSide(ICoreServerAPI api)
 		{
+			ApiHelper.Api = api;
+
 			api.Event.DidPlaceBlock += Event_DidPlaceBlock;
 			api.Event.BreakBlock += Event_BreakBlock;
 			api.Event.DidBreakBlock += Event_DidBreakBlock;
@@ -179,11 +179,10 @@ namespace LightMyRod
 
 		TextCommandResult OnAddAll(TextCommandCallingArgs args)
 		{
-			var sapi = ApiHelper.GetAsServer()!;
 			var player = args.Caller.Player;
 			var playerPos = player.Entity.Pos.AsBlockPos;
 			var start = new BlockPos(playerPos.X - 128, 1, playerPos.Z - 128);
-			var end = new BlockPos(playerPos.X + 128, sapi.WorldManager.MapSizeY, playerPos.Z + 128);
+			var end = new BlockPos(playerPos.X + 128, ApiHelper.MapSizeY, playerPos.Z + 128);
 
 			SendMessage(player, $"Searching...");
 
@@ -321,8 +320,8 @@ namespace LightMyRod
 
 	public static class ApiHelper
 	{
-		static ICoreAPI? _api;
-		public static ICoreAPI Api
+		static ICoreServerAPI? _api;
+		public static ICoreServerAPI Api
 		{
 			get
 			{
@@ -335,10 +334,10 @@ namespace LightMyRod
 				_api = value;
 			}
 		}
+		public static int MapSizeY => Api.WorldManager.MapSizeY;
 
 		public static void WalkBlocks(BlockPos min, BlockPos max, Action<Block, int, int, int> onBlock) =>
 			Api.World.BlockAccessor.WalkBlocks(min, max, onBlock);
-		public static ICoreServerAPI? GetAsServer() => Api as ICoreServerAPI;
 		public static Vec3i GetLocalPosition(BlockPos pos) => pos.ToLocalPosition(Api);
 		public static IPlayer GetPlayer(string uid) => Api.World.PlayerByUid(uid);
 		public static int GetRainMapHeight(BlockPos pos) => Api.World.BlockAccessor.GetRainMapHeightAt(pos);
