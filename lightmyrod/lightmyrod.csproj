@@ -8,6 +8,12 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<Reference Include="0Harmony">
+			<HintPath>$(VINTAGE_STORY)/Lib/0Harmony.dll</HintPath>
+		</Reference>
+		<Reference Include="Protobuf">
+			<HintPath>$(VINTAGE_STORY)/Lib/protobuf-net.dll</HintPath>
+		</Reference>
 		<Reference Include="Newtonsoft.Json">
 		  <HintPath>$(VINTAGE_STORY)/Lib/Newtonsoft.Json.dll</HintPath>
 		</Reference>

@@ -4,7 +4,7 @@ using System.Linq;
 using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
 
-namespace LightMyRod
+namespace LightMyRod.Client
 {
 	class Highlighter(ModConfig config)
 	{
@@ -27,8 +27,8 @@ namespace LightMyRod
 
 		int GetColor(Coverage coverage) => coverage switch
 		{
-			Coverage.Partial => ColorUtil.ColorFromRgba(config.PartiallyProtectedColor),
-			Coverage.Full => ColorUtil.ColorFromRgba(config.FullyProtectedColor),
+			Coverage.Partial => ColorUtil.ColorFromRgba(config.PartialProtectionColor),
+			Coverage.Full => ColorUtil.ColorFromRgba(config.FullProtectionColor),
 			_ => throw new NotImplementedException()
 		};
 

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Vintagestory.API.MathTools;
 
-namespace LightMyRod
+namespace LightMyRod.Client
 {
 	public class Registry
 	{

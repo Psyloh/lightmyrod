@@ -1,7 +1,7 @@
 ﻿using System;
 using Vintagestory.API.MathTools;
 
-namespace LightMyRod
+namespace LightMyRod.Client
 {
 	public enum Coverage
 	{
@@ -82,7 +82,7 @@ namespace LightMyRod
 						z < 0 ? -z - 1 : z
 					);
 
-					if (origin.DistanceTo(inner) >= config.MaxRadius)
+					if (origin.DistanceTo(inner) >= ModConfig.MaxRadius)
 					{
 						value = -1;
 						continue;
@@ -91,7 +91,7 @@ namespace LightMyRod
 					var outer = inner + 1;
 
 					var yDiff = MaxYDiff;
-					float radius = config.MaxRadius;
+					float radius = ModConfig.MaxRadius;
 
 					LoopUntil(r => origin.DistanceTo(outer) <= r, ref yDiff, ref radius);
 					value = yDiff << 10;

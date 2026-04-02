@@ -1,12 +1,11 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
-using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Util;
 
-namespace LightMyRod
+namespace LightMyRod.Client
 {
-	public class PlayerState(string uid, ModConfig config)
+	public class PlayerState(ModConfig config)
 	{
 		readonly Dictionary<LightningRod, ProtectiveArea> _rodAreas = [];
 		public KeyValuePair<LightningRod, ProtectiveArea>[] RodAreas => [.. _rodAreas];
@@ -60,22 +59,11 @@ namespace LightMyRod
 			_rodAreas.Clear();
 		}
 
-		public IPlayer GetPlayer()
-		{
-			return ApiHelper.GetPlayer(uid);
-		}
-
 		public bool BlockPlaced() => UpdateIf(rod => !rod.Covered && !rod.SeesTheSky());
 		public bool BlockRemoved() => UpdateIf(rod => rod.Covered && rod.SeesTheSky());
 
 		bool UpdateIf(System.Func<LightningRod, bool> predicate)
 		{
-			var player = GetPlayer();
-			if (player.ClientId == 0)
-			{
-				return false;
-			}
-
 			var toUpdate = _rodAreas.Keys.Where(predicate);
 			if (toUpdate.FirstOrDefault() == null)
 			{
