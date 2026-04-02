@@ -143,47 +143,36 @@ namespace LightMyRod.Client
 		TextCommandResult OnTest(TextCommandCallingArgs args)
 		{
 			var player = ApiHelper.Player;
-			var playerPos = player.Entity.Pos;
-			var chunkSize = GlobalConstants.ChunkSize;
-			FastVec2i chunk2D = new((int)Math.Floor(playerPos.X / chunkSize), (int)Math.Floor(playerPos.Z / chunkSize));
-			FastVec2i start = new(chunk2D.X - 5, chunk2D.Z - 5);
-			FastVec2i end = new(chunk2D.X + 5, chunk2D.Z + 5);
+			var playerPos = player.Entity.Pos.AsBlockPos;
+			var start = new BlockPos(playerPos.X - 128, 1, playerPos.Z - 128);
+			var end = new BlockPos(playerPos.X + 128, ApiHelper.MapSizeY, playerPos.Z + 128);
 
-			int rodId = ApiHelper.GetBlock("lightningrod")!.Id;
-			var mapSize = ApiHelper.MapSize;
+			player.ShowChatNotification($"Searching...");
 
-			List<BlockPos> rods = [];
-			for (var x = start.X; x <= end.X; x++)
+			List<BlockPos> positions = [];
+
+			ApiHelper.WalkBlocks(start, end, (block, x, y, z) =>
 			{
-				for (var z = start.Z; z <= end.Z; z++)
-			{
-					for (var y = mapSize.Y / chunkSize - 1; y >= 0; y--)
-					{
-						var chunk = ApiHelper.Api.World.ChunkProvider.GetChunk(x, y, z);
-						if (chunk.Empty)
-						{
-							continue;
-						}
+				if (block.Code == "lightningrod")
+				{
+					var pos = new BlockPos(x, y, z);
+					positions.Add(pos);
 
-						chunk.Unpack();
-						if (!chunk.Data.ContainsBlock(rodId))
-						{
-							continue;
-						}
-
-						foreach (var (pos, entity) in chunk.BlockEntities)
-						{
-							if (entity.Block.Id == rodId)
-							{
-								rods.Add(pos);
-							}
-						}
-					}
+					player.ShowChatNotification($"Found at {pos}");
 				}
-			}
-			player.ShowChatNotification($"{rods.Count}");
+			});
 
-			return TextCommandResult.Success($"Done");
+			if (positions.Count == 0)
+			{
+				return TextCommandResult.Success($"No rod spotted!");
+			}
+
+			var added = State.TryAdd(positions);
+			if (added != 0 && State.IsHighlighted)
+			{
+				Highlight();
+			}
+			return TextCommandResult.Success($"{added} rods registered!");
 		}
 
 		TextCommandResult OnAdd(TextCommandCallingArgs args)
@@ -210,29 +199,55 @@ namespace LightMyRod.Client
 		TextCommandResult OnAddAll(TextCommandCallingArgs args)
 		{
 			var player = ApiHelper.Player;
-			var playerPos = player.Entity.Pos.AsBlockPos;
-			var start = new BlockPos(playerPos.X - 128, 1, playerPos.Z - 128);
-			var end = new BlockPos(playerPos.X + 128, ApiHelper.MapSizeY, playerPos.Z + 128);
+			var playerPos = player.Entity.Pos;
+			var chunkSize = GlobalConstants.ChunkSize;
+			FastVec2i chunk2D = new((int)Math.Floor(playerPos.X / chunkSize), (int)Math.Floor(playerPos.Z / chunkSize));
+			FastVec2i start = new(chunk2D.X - 5, chunk2D.Z - 5);
+			FastVec2i end = new(chunk2D.X + 5, chunk2D.Z + 5);
+
+			int rodId = ApiHelper.GetBlock("lightningrod")!.Id;
+			var mapSize = ApiHelper.MapSize;
 
 			player.ShowChatNotification($"Searching...");
 
-			List<BlockPos> positions = [];
-			ApiHelper.WalkBlocks(start, end, (block, x, y, z) =>
+			List<BlockPos> rods = [];
+			for (var x = start.X; x <= end.X; x++)
 			{
-				if (block.Code == "lightningrod")
+				for (var z = start.Z; z <= end.Z; z++)
 				{
-					var pos = new BlockPos(x, y, z);
-					positions.Add(pos);
+					for (var y = mapSize.Y / chunkSize - 1; y >= 0; y--)
+					{
+						var chunk = ApiHelper.Api.World.ChunkProvider.GetChunk(x, y, z);
+						if (chunk.Empty)
+						{
+							continue;
+						}
 
-					player.ShowChatNotification($"Found at {pos}");
+						chunk.Unpack();
+						if (!chunk.Data.ContainsBlock(rodId))
+						{
+							continue;
+						}
+
+						foreach (var (pos, entity) in chunk.BlockEntities)
+						{
+							if (entity.Block.Id == rodId)
+							{
+								rods.Add(pos);
+
+								player.ShowChatNotification($"Found at {pos}");
+							}
+						}
+					}
 				}
-			});
-			if (positions.Count == 0)
+			}
+
+			if (rods.Count == 0)
 			{
 				return TextCommandResult.Success($"No rod spotted!");
 			}
 
-			var added = State.TryAdd(positions);
+			var added = State.TryAdd(rods);
 			if (added != 0 && State.IsHighlighted)
 			{
 				Highlight();
