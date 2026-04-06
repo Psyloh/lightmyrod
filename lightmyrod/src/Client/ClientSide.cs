@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.CommandAbbr;
@@ -7,31 +8,33 @@ using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
 using Vintagestory.API.Util;
+using Vintagestory.Client.NoObf;
 using Vintagestory.Common;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace LightMyRod.Client
 {
 	public class ClientConfig
 	{
-		public bool HighlightPartial { get; set; } = true;
+		public bool ShowPartial { get; set; } = true;
 		public byte[] PartialProtectionColor { get; set; } = [180, 40, 5, 150];
 		public byte[] FullProtectionColor { get; set; } = [0, 255, 80, 80];
+		public int WalkRadius { get; set; } = 5;
 	}
 
 	public class ModConfig(ConfigData data, ClientConfig config)
 	{
 		const string FILENAME = "lightmyrod-client.json";
-		//TODO: replace these when transpiled
-		public static float MaxRadius => 40;
-		public static bool CenterProtectionOnRod => false;
-		public static bool FixFireStartingAlgorithm => false;
-		public static int FireStartRadius => 1;
 
-		public bool HighlightPartial => config.HighlightPartial;
+		public bool ShowPartial => config.ShowPartial;
 		public byte[] PartialProtectionColor => config.PartialProtectionColor;
 		public byte[] FullProtectionColor => config.FullProtectionColor;
+		public int WalkRadius => config.WalkRadius;
 
+		public float MaxRadius => data.MaxRadius;
+		public bool CenterProtectionOnRod => data.CenterProtectionOnRod;
 		public float ArtificialElevation => data.ArtificialElevation;
+		public bool FixFireStartingAlgorithm => data.FixFireStartingAlgorithm;
 
 		public float GetRadiusFor(int yDiff) => yDiff * data.ElevationAttractivenessMultiplier;
 		public int GetYDiffAt(float radius) => (int)Math.Ceiling(radius / data.ElevationAttractivenessMultiplier);
@@ -70,28 +73,30 @@ namespace LightMyRod.Client
 		PlayerState? _state;
 		PlayerState State => _state!;
 
-		public ClientSide(ICoreClientAPI api, ILogger logger)
+		public ClientSide(ICoreClientAPI api, Mod mod)
 		{
 			ApiHelper.Api = api;
 			//TODO: save and load states
 			ApiHelper.SetHandler<ConfigData>(d =>
 			{
-				_config = ModConfig.Get(d, logger);
-				_highlighter = new(Config);
+				_config = ModConfig.Get(d, mod.Logger);
 				_state = new(Config);
+				_highlighter = new(Config, _state);
+
+				ApiHelper.Api.Event.RegisterRenderer(_renderer, EnumRenderStage.OIT);
 
 				ApiHelper.SetHandler<BlockPlaced>(_ =>
 				{
-					if (State.BlockPlaced() && _state.IsHighlighted)
+					if (State.BlockPlaced())
 					{
-						Highlight();
+						Highlighter.Highlight();
 					}
 				})
 				.SetMessageHandler<BlockBroken>(_ =>
 				{
-					if (State.BlockRemoved() && _state.IsHighlighted)
+					if (State.BlockRemoved())
 					{
-						Highlight();
+						Highlighter.Highlight();
 					}
 				})
 				//TODO: define behavior when rod added
@@ -104,75 +109,102 @@ namespace LightMyRod.Client
 						Remove(index);
 					}
 				});
+
+				api.ChatCommands.GetOrCreate("test")
+					.HandleWith(OnTest);
+
+				api.ChatCommands.GetOrCreate("lightmyrod").WithAlias("lmr")
+					.BeginSub("list").WithAlias("l")
+						.HandleWith(OnList)
+					.EndSub()
+					.BeginSub("add").WithAlias("a")
+						.HandleWith(OnAdd)
+					.EndSub()
+					.BeginSub("addall").WithAlias("!")
+						.HandleWith(OnAddAll)
+					.EndSub()
+					.BeginSub("clear").WithAlias("c")
+						.HandleWith(OnClear)
+					.EndSub()
+					.BeginSub("remove").WithAlias("rem").WithAlias("r")
+						.WithArgs(api.ChatCommands.Parsers.Int("index"))
+						.HandleWith(OnRemove)
+					.EndSub()
+					.BeginSub("hi")
+						.HandleWith(OnHi)
+					.EndSub()
+					.BeginSub("unhi")
+						.HandleWith(OnUnhi)
+					.EndSub()
+					.BeginSub("walk")
+					.EndSub();
 			});
-
-			api.ChatCommands.GetOrCreate("lightmyrod").WithAlias("lmr")
-				.RequiresPlayer()
-				.BeginSub("test")
-					.HandleWith(OnTest)
-				.EndSub();
-
-			api.ChatCommands.GetOrCreate("lightmyrod").WithAlias("lmr")
-				.RequiresPrivilege(Privilege.chat)
-				.BeginSub("list").WithAlias("l")
-					.HandleWith(OnList)
-				.EndSub()
-				.BeginSub("add").WithAlias("a")
-					.HandleWith(OnAdd)
-				.EndSub()
-				.BeginSub("addall").WithAlias("!")
-					.HandleWith(OnAddAll)
-				.EndSub()
-				.BeginSub("clear").WithAlias("c")
-					.HandleWith(OnClear)
-				.EndSub()
-				.BeginSub("remove").WithAlias("rem").WithAlias("r")
-					.WithArgs(api.ChatCommands.Parsers.Int("index"))
-					.HandleWith(OnRemove)
-				.EndSub()
-				.BeginSub("hi")
-					.HandleWith(OnHi)
-				.EndSub()
-				.BeginSub("unhi")
-					.HandleWith(OnUnhi)
-				.EndSub()
-				.BeginSub("walk")
-				.EndSub();
 		}
+
+		class Renderer : IRenderer
+		{
+			public double RenderOrder => 0.89;
+			public int RenderRange => 200;
+
+			public void Dispose()
+			{
+				if (Context != null)
+				{
+					ApiHelper.Api.Render.DeleteMesh(Context.MeshRef);
+				}
+			}
+
+			public HighlightContext? Context;
+
+			public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
+			{
+				if (Context == null)
+				{
+					return;
+				}
+				
+				var highlighter = ShaderPrograms.Blockhighlights;
+				highlighter.Use();
+
+				ApiHelper.Api.Render.GlPushMatrix();
+				ApiHelper.Api.Render.GlLoadMatrix(ApiHelper.Api.Render.CameraMatrixOrigin);
+
+				var cameraPos = ApiHelper.Player.Entity.CameraPos;
+				ApiHelper.Api.Render.GlTranslate(Context.Pos.X - cameraPos.X, Context.Pos.Y - cameraPos.Y, Context.Pos.Z - cameraPos.Z);
+
+				highlighter.ModelViewMatrix = ApiHelper.Api.Render.CurrentModelviewMatrix;
+				highlighter.ProjectionMatrix = ApiHelper.Api.Render.CurrentProjectionMatrix;
+
+				ApiHelper.Api.Render.RenderMesh(Context.MeshRef);
+				ApiHelper.Api.Render.GlPopMatrix();
+
+				highlighter.Stop();
+			}
+		}
+
+		Renderer _renderer = new();
 
 		TextCommandResult OnTest(TextCommandCallingArgs args)
 		{
-			var player = ApiHelper.Player;
-			var playerPos = player.Entity.Pos.AsBlockPos;
-			var start = new BlockPos(playerPos.X - 128, 1, playerPos.Z - 128);
-			var end = new BlockPos(playerPos.X + 128, ApiHelper.MapSizeY, playerPos.Z + 128);
+			MeshData mesh = new(4 * 6, 6 * 6, false, false, true, false);
+			var shadings = CubeMeshUtil.DefaultBlockSideShadingsByFacing;
+			var red = ColorUtil.ColorFromRgba([255, 0, 0, 150]);
 
-			player.ShowChatNotification($"Searching...");
-
-			List<BlockPos> positions = [];
-
-			ApiHelper.WalkBlocks(start, end, (block, x, y, z) =>
+			foreach (var facing in BlockFacing.ALLFACES)
 			{
-				if (block.Code == "lightningrod")
-				{
-					var pos = new BlockPos(x, y, z);
-					positions.Add(pos);
-
-					player.ShowChatNotification($"Found at {pos}");
-				}
-			});
-
-			if (positions.Count == 0)
-			{
-				return TextCommandResult.Success($"No rod spotted!");
+				ModelCubeUtilExt.AddFaceSkipTex(mesh, facing, Vec3f.Zero, Vec3f.One, red, shadings[facing.Index]);
 			}
 
-			var added = State.TryAdd(positions);
-			if (added != 0 && State.IsHighlighted)
-			{
-				Highlight();
-			}
-			return TextCommandResult.Success($"{added} rods registered!");
+			var pos = ApiHelper.Player.Entity.Pos.AsBlockPos;
+			_renderer.Context = new (pos, ApiHelper.Api.Render.UploadMesh(mesh));
+
+			return TextCommandResult.Success();
+		}
+
+		class HighlightContext(BlockPos pos, MeshRef meshRef)
+		{
+			public BlockPos Pos => pos;
+			public MeshRef MeshRef = meshRef;
 		}
 
 		TextCommandResult OnAdd(TextCommandCallingArgs args)
@@ -189,9 +221,9 @@ namespace LightMyRod.Client
 				return TextCommandResult.Success($"That one is already on the list!");
 			}
 
-			if (State.IsHighlighted && !rod.Covered)
+			if (!rod.Covered)
 			{
-				Highlight();
+				Highlighter.Highlight();
 			}
 			return TextCommandResult.Success($"Rod at {ApiHelper.GetLocalPosition(rod.Position)} added to the list!");
 		}
@@ -248,15 +280,15 @@ namespace LightMyRod.Client
 			}
 
 			var added = State.TryAdd(rods);
-			if (added != 0 && State.IsHighlighted)
+			if (added != 0)
 			{
-				Highlight();
+				Highlighter.Highlight();
 			}
 			return TextCommandResult.Success($"{added} rods registered!");
 		}
 
-		//TODO: multi => maybe set a distance at which stuff got unhi
-		//TODO: perfs => highlight through threads, try Stopwatch different parts of algo
+		//TODO: multi => test highlighted blocks behavior when I'm far away
+		//TODO: perfs => search for a way to highlight through threads, try Stopwatch different parts of algo
 
 		TextCommandResult OnList(TextCommandCallingArgs args)
 		{
@@ -276,7 +308,7 @@ namespace LightMyRod.Client
 		{
 			if (!State.IsEmpty)
 			{
-				Highlighter.Unhi(ApiHelper.Player);
+				Highlighter.Unhi();
 
 				State.Clear();
 			}
@@ -293,7 +325,7 @@ namespace LightMyRod.Client
 			}
 			return TextCommandResult.Success($@"Wrong index : use "".lmr list"" to choose an index from!");
 		}
-
+		//TODO: refacto highliter.hi/unhi to set state, replace default highlight with Update
 		TextCommandResult OnHi(TextCommandCallingArgs args)
 		{
 			var player = ApiHelper.Player;
@@ -303,7 +335,7 @@ namespace LightMyRod.Client
 
 				if (!State.IsEmpty)
 				{
-					Highlight();
+					Task.Run(() => Highlighter.Highlight());
 
 					var covered = State.CoveredRods;
 					if (covered.Length > 0)
@@ -328,7 +360,7 @@ namespace LightMyRod.Client
 
 				if (!State.IsEmpty)
 				{
-					Highlighter.Unhi(ApiHelper.Player);
+					Highlighter.Unhi();
 				}
 			}
 			return TextCommandResult.Success("Highlight is off!");
@@ -337,16 +369,11 @@ namespace LightMyRod.Client
 		bool Remove(int index)
 		{
 			var removed = State.TryRemove(index);
-			if (removed && State.IsHighlighted)
+			if (removed)
 			{
-				Highlight();
+				Highlighter.Highlight();
 			}
 			return removed;
-		}
-
-		void Highlight()
-		{
-			Highlighter.Hightlight(State, ApiHelper.Player);
 		}
 
 		public void Dispose()
@@ -369,17 +396,18 @@ namespace LightMyRod.Client
 		public static int MapSizeY => Api.World.BlockAccessor.MapSizeY;
 
 		public static IWorldChunk GetChunk(BlockPos pos) => Api.World.BlockAccessor.GetChunkAtBlockPos(pos);
-		public static void WalkBlocks(BlockPos min, BlockPos max, Action<Block, int, int, int> onBlock) =>
-			Api.World.BlockAccessor.WalkBlocks(min, max, onBlock);
 		public static Vec3i GetLocalPosition(BlockPos pos) => pos.ToLocalPosition(Api);
 		public static int GetRainMapHeight(BlockPos pos) => Api.World.BlockAccessor.GetRainMapHeightAt(pos);
 		public static bool IsRainMap(BlockPos pos) => GetRainMapHeight(pos) == pos.Y;
-		public static void UnhiBlocks(IPlayer player, int channel) => Api.World.HighlightBlocks(player, channel, [], []);
-		public static void HighlightBlocks(IPlayer player, int channel, List<BlockPos> positions, List<int> colors) =>
-			Api.World.HighlightBlocks(player, channel, positions, colors);
+		public static void UnhiBlocks(int channel) => Api.World.HighlightBlocks(Player, channel, [], []);
+		public static void HighlightBlocks(int channel, List<BlockPos> positions, List<int> colors) =>
+			MainThreadTask(() => Api.World.HighlightBlocks(Player, channel, positions, colors), "highlight");
 		public static IClientNetworkChannel SetHandler<T>(NetworkServerMessageHandler<T> handler) =>
 			Api.Network.GetChannel(LMRModSystem.CHANNEL_ID).SetMessageHandler(handler);
 		public static ClientConfig LoadConfig(string filename) => Api.LoadModConfig<ClientConfig>(filename);
 		public static Block? GetBlock(string name) => Api.World.GetBlock(name);
+		public static void MainThreadTask(Action action, string code) => Api.Event.EnqueueMainThreadTask(action, code);
+		public static void ChatMessage(string message) => Player.ShowChatNotification(message);
+		public static void ChatMessageFromParallel(string message) => MainThreadTask(() => ChatMessage(message), "chatMessage");
 	}
 }

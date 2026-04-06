@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Concurrent;
+using System.Threading.Tasks;
 using Vintagestory.API.MathTools;
 
 namespace LightMyRod.Client
@@ -7,24 +9,20 @@ namespace LightMyRod.Client
 	{
 		Partial, Full
 	}
-
+	//TODO: implement CenteredOnRod!
 	public class Pattern
 	{
 		readonly int _sideLength;
+		public int SideLength => _sideLength;
 		readonly int[] _data;
-		readonly int _centerIndex;
 
 		public Pattern(int maxOffset)
 		{
-			_sideLength = (maxOffset << 1) + 1;
-
-			var size = _sideLength * _sideLength;
-			_data = new int[size];
-
-			_centerIndex = size >> 1;
+			_sideLength = maxOffset + 1;
+			_data = new int[_sideLength * _sideLength];
 		}
 
-		public ref int this[int x, int z] => ref _data[_centerIndex + z * _sideLength + x];
+		public ref int this[int x, int z] => ref _data[z * _sideLength + x];
 	}
 
 	public class ProtectiveArea(LightningRod rod, ModConfig config)
@@ -52,6 +50,16 @@ namespace LightMyRod.Client
 			}
 		}
 
+		BlockPos? _topPosition;
+		BlockPos TopPosition
+		{
+			get
+			{
+				_topPosition ??= rod.Position.UpCopy((int)Math.Ceiling(config.ArtificialElevation));
+				return _topPosition;
+			}
+		}
+
 		void LoopUntil(Func<float, bool> predicate, ref int yDiff, ref float radius)
 		{
 			while (yDiff > 0 && predicate(radius))
@@ -63,26 +71,18 @@ namespace LightMyRod.Client
 
 		Pattern CalcPattern()
 		{
-			var maxOffset = config.GetMaxOffset();
-			var pattern = new Pattern(maxOffset);
-			pattern[0, 0] = -1;
-
+			var pattern = new Pattern(config.GetMaxOffset());
 			var origin = new FastVec2f(0, 0);
 
-			for (var z = -maxOffset; z < maxOffset; z++)
+			for (var z = 0; z < pattern.SideLength; z++)
 			{
-				for (var x = -maxOffset; x < maxOffset; x++)
+				for (var x = 0; x < pattern.SideLength; x++)
 				{
 					ref var value = ref pattern[x, z];
 
-					if (value < 0) continue;
+					var inner = new FastVec2f(x, z);
 
-					var inner = new FastVec2f(
-						x < 0 ? -x - 1 : x,
-						z < 0 ? -z - 1 : z
-					);
-
-					if (origin.DistanceTo(inner) >= ModConfig.MaxRadius)
+					if (origin.DistanceTo(inner) >= config.MaxRadius)
 					{
 						value = -1;
 						continue;
@@ -91,7 +91,7 @@ namespace LightMyRod.Client
 					var outer = inner + 1;
 
 					var yDiff = MaxYDiff;
-					float radius = ModConfig.MaxRadius;
+					float radius = config.MaxRadius;
 
 					LoopUntil(r => origin.DistanceTo(outer) <= r, ref yDiff, ref radius);
 					value = yDiff << 10;
@@ -104,36 +104,58 @@ namespace LightMyRod.Client
 			return pattern;
 		}
 
-		BlockPos GetTopPosition() => rod.Position.UpCopy((int)Math.Ceiling(config.ArtificialElevation));
-
-		public void Feed(Registry registry)
+		void FeedGranular(Registry registry, FeedContext context)
 		{
-			var topPos = GetTopPosition();
-			var maxOffset = config.GetMaxOffset();
-			var minHeight = topPos.Y - MaxYDiff;
+			var above = TopPosition.Y - (context.Value & 0x3ff);
+			var limitYDiff = context.Value >> 10;
 
-			for (var z = -maxOffset; z < maxOffset; z++)
+			var verticalPos = new BlockPos(TopPosition.X + context.Coords.X, 0, TopPosition.Z + context.Coords.Z);
+			verticalPos.Y = ApiHelper.GetRainMapHeight(verticalPos);
+
+			if (limitYDiff < MaxYDiff)
 			{
-				for (var x = -maxOffset; x < maxOffset; x++)
+				registry.RegisterUntil(bp => bp.Y < TopPosition.Y - limitYDiff, ref verticalPos, Coverage.Full);
+			}
+			registry.RegisterUntil(bp => bp.Y < above, ref verticalPos, Coverage.Partial);
+		}
+
+		public async Task FeedParallel(Registry registry)
+		{
+			Parallel.ForEach(GetContexts(), new() { MaxDegreeOfParallelism = Environment.ProcessorCount - 1 }, context =>
+			{
+				FeedGranular(registry, context);
+			});
+		}
+
+		ConcurrentBag<FeedContext> GetContexts()
+		{
+			ConcurrentBag<FeedContext> contexts = [];
+			Parallel.For(0, Pattern.SideLength, new() { MaxDegreeOfParallelism = Environment.ProcessorCount - 1 }, z =>
+			{
+				for (var x = 0; x < Pattern.SideLength; x++)
 				{
 					var value = Pattern[x, z];
-
-					if (value < 0) continue;
-
-					var above = topPos.Y - (value & 0x3ff);
-					var limit = topPos.Y - (value >> 10);
-
-					var verticalPos = new BlockPos(topPos.X + x, 0, topPos.Z + z);
-					verticalPos.Y = ApiHelper.GetRainMapHeight(verticalPos);
-
-					if (limit > minHeight)
+					if (value < 0)
 					{
-						registry.RegisterUntil(bp => bp.Y < limit, ref verticalPos, Coverage.Full);
+						break;
 					}
 
-					registry.RegisterUntil(bp => bp.Y < above, ref verticalPos, Coverage.Partial);
+					if (x > 0 || z > 0)
+					{
+						contexts.Add(new(value, new FastVec2i(x, z)));
+					}
+					contexts.Add(new(value, new FastVec2i(-x - 1, -z - 1)));
+					contexts.Add(new(value, new FastVec2i(x, -z - 1)));
+					contexts.Add(new(value, new FastVec2i(-x - 1, z)));
 				}
-			}
+			});
+			return contexts;
 		}
+	}
+
+	struct FeedContext(int value, FastVec2i coords)
+	{
+		public readonly int Value => value;
+		public readonly FastVec2i Coords => coords;
 	}
 }

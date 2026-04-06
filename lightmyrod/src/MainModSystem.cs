@@ -1,4 +1,5 @@
-﻿using LightMyRod.Client;
+﻿using HarmonyLib;
+using LightMyRod.Client;
 using LightMyRod.Server;
 using ProtoBuf;
 using Vintagestory.API.Client;
@@ -29,12 +30,12 @@ namespace LightMyRod
 
 		public override void StartClientSide(ICoreClientAPI api)
 		{
-			_client = new(api, Mod.Logger);
+			_client = new(api, Mod);
 		}
 
 		public override void StartServerSide(ICoreServerAPI api)
 		{
-			_server = new(api, Mod.Logger);
+			_server = new(api, Mod);
 		}
 
 		public override void Dispose()
@@ -52,7 +53,6 @@ namespace LightMyRod
 		public required float ElevationAttractivenessMultiplier { get; set; }
 		public required bool CenterProtectionOnRod { get; set; }
 		public required bool FixFireStartingAlgorithm { get; set; }
-		public required int FireStartRadius { get; set; }
 	}
 
 	[ProtoContract]

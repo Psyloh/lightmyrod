@@ -1,38 +1,60 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using Vintagestory.API.MathTools;
 
 namespace LightMyRod.Client
 {
+	public class MeshContext
+	{
+		int _color;
+		ConcurrentDictionary<BlockPos, int> _facings = [];
+
+		public void AddPosition(BlockPos position)
+		{
+			var currentFacing = BlockFacing.HorizontalFlags | BlockFacing.VerticalFlags;
+			_facings[position] = currentFacing;
+
+			foreach (var face in BlockFacing.ALLFACES)
+			{
+				var neighbor = position.AddCopy(face);
+				if (_facings.TryGetValue(neighbor, out var facing))
+				{
+					_facings[position] = currentFacing & ~face.Flag;
+					_facings[neighbor] = facing & ~face.Opposite.Flag;
+				}
+			}
+		}
+	}
+
 	public class Registry
 	{
-		readonly Dictionary<BlockPos, Coverage> _positions = [];
-		public Dictionary<Coverage, List<BlockPos>> Positions
+		readonly ConcurrentDictionary<BlockPos, Coverage> _positions = [];
+		public Dictionary<Coverage, MeshContext> MeshContexts
 		{
 			get
 			{
-				var positions = Enum.GetValues<Coverage>().ToDictionary(c => c, c => new List<BlockPos>());
+				var contexts = Enum.GetValues<Coverage>().Select(c => (c, new MeshContext())).ToDictionary();
 
 				foreach (var (bp, coverage) in _positions)
 				{
-					positions[coverage].Add(bp);
+					contexts[coverage].AddPosition(bp);
 				}
 				_positions.Clear();
 
-				return positions;
+				return contexts;
 			}
 		}
 
 		public void Register(BlockPos pos, Coverage coverage)
 		{
-			if (!_positions.TryGetValue(pos, out var value))
+			var key = pos.Copy();
+			var value = _positions.GetOrAdd(key, coverage);
+
+			if (value != coverage && value != Coverage.Full)
 			{
-				_positions.Add(pos.Copy(), coverage);
-			}
-			else if (value != Coverage.Full)
-			{
-				_positions[pos] = coverage;
+				_positions[key] = coverage;
 			}
 		}
 
