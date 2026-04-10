@@ -1,78 +1,60 @@
 ﻿using HarmonyLib;
 using Newtonsoft.Json.Linq;
-using ProtoBuf;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
 using System.Reflection.Emit;
 using Vintagestory.API.Common;
-using Vintagestory.API.Common.CommandAbbr;
 using Vintagestory.API.Datastructures;
-using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
 using Vintagestory.GameContent;
 
 namespace LightMyRod.Server
 {
-	[ProtoContract(ImplicitFields = ImplicitFields.AllPublic)]
 	class ServerConfig(ConfigData data)
 	{
 		const string FILENAME = "lightmyrod-server.json";
 
 		public ConfigData Data => data;
 
-		public static ServerConfig Get(ILogger logger)
+		public static ServerConfig Get()
 		{
 			ConfigData data;
 			try
 			{
 				data = ApiHelper.LoadConfig(FILENAME);
-				data ??= GetDefault();
+				data ??= ConfigData.GetDefault(ApiHelper.Api);
 			}
 			catch (Exception e)
 			{
-				logger.Warning("Configuration file corrupted - loading default settings! Please fix or delete the file...");
-				logger.Error(e);
+				ApiHelper.ModLogger.Warning("Configuration file corrupted - loading default settings! Please fix or delete the file...");
+				ApiHelper.ModLogger.Error(e);
 
-				return new(GetDefault());
+				return new(ConfigData.GetDefault(ApiHelper.Api));
 			}
 			ApiHelper.Api.StoreModConfig(data, FILENAME);
 
 			return new(data);
 		}
-
-		static ConfigData GetDefault() => new()
-		{
-			MaxRadius = 40,
-			ArtificialElevation = 5,
-			ElevationAttractivenessMultiplier = 2,
-			CenterProtectionOnRod = false,
-			FixFireStartingAlgorithm = false
-		};
 	}
 
 	public class ServerSide: IDisposable
 	{
-		readonly Mod _mod;
 		readonly ServerConfig _config;
 		readonly Harmony _patcher;
 
 		public ServerSide(ICoreServerAPI api, Mod mod)
 		{
 			ApiHelper.Api = api;
+			ApiHelper.Mod = mod;
 
-			_mod = mod;
-			_config = ServerConfig.Get(mod.Logger);
+			_config = ServerConfig.Get();
 
-			Patch_BEBehaviorAttractsLightning_Initialize.Data = _config.Data;
+			Patch_BEBehaviorAttractsLightning_Initialize.Data = _config.Data.Vanilla;
 			Patch_BEBehaviorAttractsLightning_OnLightningStart.Data = _config.Data;
 			Patch_ModSystemFireFromLightning_OnLightningImpactEnd.Data = _config.Data;
 
 			_patcher = new Harmony(mod.Info.ModID);
 			_patcher.PatchAll();
-
-			api.ChatCommands.Create("test").RequiresPrivilege(Privilege.chat).HandleWith(Test);
 
 			api.Event.DidPlaceBlock += Event_DidPlaceBlock;
 			api.Event.BreakBlock += Event_BreakBlock;
@@ -80,18 +62,10 @@ namespace LightMyRod.Server
 			api.Event.PlayerJoin += Event_PlayerJoin;
 		}
 
-		TextCommandResult Test(TextCommandCallingArgs args)
-		{
-			var original = AccessTools.Method(typeof(BEBehaviorAttractsLightning), "OnLightningStart");
-			_patcher.Patch(original);
-			return TextCommandResult.Success();
-		}
-
 		private void Event_PlayerJoin(IServerPlayer byPlayer)
 		{
 			ApiHelper.SendData(_config.Data, byPlayer);
 		}
-
 		private void Event_DidPlaceBlock(IServerPlayer byPlayer, int oldblockId, BlockSelection blockSel, ItemStack withItemStack)
 		{
 			if (withItemStack.Class == EnumItemClass.Block && withItemStack.Block.Code == "lightningrod")
@@ -100,7 +74,7 @@ namespace LightMyRod.Server
 			}
 			else
 			{
-				ApiHelper.Broadcast(new BlockPlaced());
+				ApiHelper.Broadcast(BlockPlaced.Instance);
 			}
 		}
 		private void Event_BreakBlock(IServerPlayer byPlayer, BlockSelection blockSel, ref float dropQuantityMultiplier, ref EnumHandling handling)
@@ -112,7 +86,7 @@ namespace LightMyRod.Server
 		}
 		private void Event_DidBreakBlock(IServerPlayer byPlayer, int oldblockId, BlockSelection blockSel)
 		{
-			ApiHelper.Broadcast(new BlockBroken());
+			ApiHelper.Broadcast(BlockBroken.Instance);
 		}
 
 		public void Dispose()
@@ -120,18 +94,18 @@ namespace LightMyRod.Server
 			ApiHelper.Event.DidPlaceBlock += Event_DidPlaceBlock;
 			ApiHelper.Event.BreakBlock -= Event_BreakBlock;
 			ApiHelper.Event.DidBreakBlock -= Event_DidBreakBlock;
+			ApiHelper.Event.PlayerJoin -= Event_PlayerJoin;
 
-			_patcher.UnpatchAll(_mod.Info.ModID);
+			_patcher.UnpatchAll(ApiHelper.ModId);
 
 			GC.SuppressFinalize(this);
 		}
 	}
 	//TODO: think about optimizing hot config changes
-	//TODO: deal with the case client-side only (Config)
 	[HarmonyPatch(typeof(BEBehaviorAttractsLightning), nameof(BEBehaviorAttractsLightning.Initialize))]
 	static class Patch_BEBehaviorAttractsLightning_Initialize
 	{
-		public static ConfigData? Data;
+		public static VanillaConfigData? Data;
 		public static void Prefix(ref JsonObject properties)
 		{
 			properties = new JsonObject(new JObject
@@ -216,7 +190,18 @@ namespace LightMyRod.Server
 			get { return _api!; }
 			set { _api = value; }
 		}
+
+		static Mod? _mod;
+		public static Mod Mod
+		{
+			get { return _mod!; }
+			set { _mod = value; }
+		}
+
 		public static IServerEventAPI Event => Api.Event;
+		public static ILogger Logger => Api.Logger;
+		public static ILogger ModLogger => Mod.Logger;
+		public static string ModId => Mod.Info.ModID;
 
 		public static void Broadcast<T>(T message) => Api.Network.GetChannel(LMRModSystem.CHANNEL_ID).BroadcastPacket(message);
 		public static ConfigData LoadConfig(string filename) => Api.LoadModConfig<ConfigData>(filename);

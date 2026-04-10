@@ -1,96 +1,134 @@
-﻿using System.Collections.Generic;
+﻿using LightMyRod.Client.Model;
+using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Vintagestory.API.MathTools;
-using Vintagestory.API.Util;
 
 namespace LightMyRod.Client
 {
-	public class PlayerState(ModConfig config)
+	public class PlayerState(Highlighter highlighter, ModConfig config): IDisposable
 	{
-		readonly Dictionary<LightningRod, ProtectiveArea> _rodAreas = [];
-		public KeyValuePair<LightningRod, ProtectiveArea>[] RodAreas => [.. _rodAreas];
-		public LightningRod[] Rods => [.. _rodAreas.Keys];
-		public LightningRod[] CoveredRods => [.. _rodAreas.Keys.Where(r => r.Covered)];
-		public ProtectiveArea[] HighlightableAreas => [.. _rodAreas.Values.Where(a => !a.Rod.Covered)];
-		public (int, LightningRod)[] IndexedRods => [.. _rodAreas.Keys.Index()];
-
 		public bool IsHighlighted = false;
-		public bool IsEmpty => _rodAreas.Count == 0;
+		public IEnumerable<(int, LightningRod)> IndexedRods => _manager.Rods.Index();
+		public IEnumerable<LightningRod> InactiveRods => _manager.InactiveRods;
+
+		readonly RodManager _manager = new(config);
 
 		public LightningRod? TryAdd(BlockPos position)
 		{
-			if (_rodAreas.Keys.IndexOf(r => r.Position == position) != -1)
+			var rod = _manager.TryAdd(position);
+			if (rod != null && rod.Value.Active)
 			{
-				return null;
+				UpdateHighlight();
 			}
-
-			var rod = new LightningRod(position);
-			_rodAreas[rod] = new(rod, config);
-
 			return rod;
 		}
 
-		public int TryAdd(IEnumerable<BlockPos> positions)
+		public int TryAddRange(IEnumerable<BlockPos> positions)
 		{
 			var count = 0;
 			foreach (var pos in positions)
 			{
-				if (TryAdd(pos) != null)
+				if (_manager.TryAdd(pos) != null)
 				{
 					count++;
 				}
+			}
+
+			if (count > 0)
+			{
+				UpdateHighlight();
 			}
 			return count;
 		}
 
 		public bool TryRemove(int index)
 		{
-			if (index < 0 || index >= _rodAreas.Count)
+			var removed = _manager.TryRemove(index);
+			if (removed)
 			{
-				return false;
+				UpdateHighlight();
 			}
-			_rodAreas.Remove(_rodAreas.ElementAt(index).Key);
+			return removed;
+		}
 
-			return true;
+		public bool TryRemove(BlockPos pos)
+		{
+			var removed = _manager.TryRemove(pos);
+			if (removed)
+			{
+				UpdateHighlight();
+			}
+			return removed;
 		}
 
 		public void Clear()
 		{
-			_rodAreas.Clear();
+			_manager.Clear();
+			UpdateHighlight();
 		}
 
-		public bool BlockPlaced() => UpdateIf(rod => !rod.Covered && !rod.SeesTheSky());
-		public bool BlockRemoved() => UpdateIf(rod => rod.Covered && rod.SeesTheSky());
-
-		bool UpdateIf(System.Func<LightningRod, bool> predicate)
+		void UpdateHighlight()
 		{
-			var toUpdate = _rodAreas.Keys.Where(predicate);
-			if (toUpdate.FirstOrDefault() == null)
+			if (IsHighlighted)
 			{
-				return false;
+				if (_manager.HasActiveRods)
+				{
+					Task.Run(() => highlighter.Update(this));
+				}
+				else
+				{
+					highlighter.Unhi();
+				}
 			}
-
-			foreach (var rod in toUpdate)
-			{
-				rod.Covered = !rod.Covered;
-			}
-			return true;
 		}
-	}
 
-	public class LightningRod
-	{
-		readonly BlockPos _position;
-		public BlockPos Position => _position;
-		public Vec3i LocalPosition => ApiHelper.GetLocalPosition(_position);
-		public bool Covered { get; set; }
-
-		public LightningRod(BlockPos position)
+		public IEnumerable<LightningRod>? Highlight()
 		{
-			_position = position;
-			Covered = !SeesTheSky();
+			if (!IsHighlighted)
+			{
+				IsHighlighted = true;
+
+				if (_manager.HasActiveRods)
+				{
+					_ = Task.Run(async() =>
+					{
+						var registry = await _manager.GetRegistry();
+						_ = highlighter.Highlight(registry);
+					});
+				}
+			}
+			return _manager.InactiveRods;
 		}
 
-		public bool SeesTheSky() => ApiHelper.IsRainMap(_position);
+		public void Unhi()
+		{
+			if (!IsHighlighted)
+			{
+				return;
+			}
+			IsHighlighted = false;
+
+			if (_manager.HasActiveRods)
+			{
+				highlighter.Unhi();
+			}
+		}
+
+		public void BlockEvent()
+		{
+			if (_manager.UpdateRods())
+			{
+				UpdateHighlight();
+			}
+		}
+
+		public void Dispose()
+		{
+			highlighter.Dispose();
+
+			GC.SuppressFinalize(this);
+		}
 	}
 }

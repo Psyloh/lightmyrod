@@ -1,132 +1,73 @@
-﻿using HarmonyLib;
+﻿using LightMyRod.Client.Model;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
-using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using Vintagestory.API.Client;
-using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
+using Vintagestory.Client.NoObf;
 
 namespace LightMyRod.Client
 {
-	class Highlighter(ModConfig config, PlayerState state)
+	struct Visual(BlockPos origin, MeshRef mesh)
 	{
-		public async Task Highlight()
+		public readonly BlockPos Origin => origin;
+		public readonly MeshRef Mesh => mesh;
+	}
+	//TODO: Study more of HighlightSystem to check stuff about anchoring
+	public class Highlighter(ModConfig config) : IRenderer, IDisposable
+	{
+		public double RenderOrder => 0.89;
+		public int RenderRange => 256;
+
+		readonly Dictionary<Coverage, Visual> _visuals = [];
+
+		public async Task Highlight(Registry registry)
 		{
-			if (!state.IsHighlighted)
+			var meshInfos = registry.MeshInfos;
+			ApiHelper.Api.Event.EnqueueMainThreadTask(() => ApiHelper.Api.Event.RegisterRenderer(this, EnumRenderStage.OIT), "lmr");
+
+			var sw = Stopwatch.StartNew();
+			foreach (var (coverage, info) in meshInfos)
 			{
-				return;
-			}
-
-			Stopwatch sw = Stopwatch.StartNew();
-			Registry registry = new();
-
-			foreach (var area in state.HighlightableAreas)
-			{
-				await area.FeedParallel(registry);
-			}
-
-			var meshContexts = registry.MeshContexts;
-
-			sw.Stop();
-			ApiHelper.Api.Logger.Error($"{sw.Elapsed}");
-
-
-
-			return;
-			foreach (var (coverage, context) in meshContexts)
-			{
-				if (coverage == Coverage.Partial && !config.ShowPartial)
-				{
-					continue;
-				}
-
+				if (info.Cubes.Length == 0) continue;
+				var cubes = info.Cubes;
+				var origin = info.Origin;
+				MeshData mesh = new(cubes.Length * 4 * 6, cubes.Length * 6 * 6, false, false, true, false);
+				var shadings = CubeMeshUtil.DefaultBlockSideShadingsByFacing;
 				var color = GetColor(coverage);
-				//List<int> colors = [.. Enumerable.Repeat(color, list.Count)];
-				//ApiHelper.HighlightBlocks(GetChannel(coverage), list, colors);
+
+				foreach (var cube in cubes)
+				{
+					if (cube.Facing == 0)
+					{
+						continue;
+					}
+
+					foreach (var face in BlockFacing.ALLFACES)
+					{
+						if ((cube.Facing & face.Flag) != 0)
+						{
+							var center = new Vec3f
+							{
+								X = cube.Position.X - origin.X + 0.5f,
+								Y = cube.Position.InternalY - origin.Y + 0.5f,
+								Z = cube.Position.Z - origin.Z + 0.5f
+							};
+							ModelCubeUtilExt.AddFaceSkipTex(mesh, face, center, Vec3f.One, color, shadings[face.Index]);
+						}
+					}
+				}
+				sw.Stop();
+				ApiHelper.ModLogger.Error($"Mesh data ready : {sw.Elapsed} | {mesh.VerticesCount} vertices");
+				ApiHelper.Api.Event.EnqueueMainThreadTask(() => _visuals[coverage] = new(origin, ApiHelper.Api.Render.UploadMesh(mesh)), "lmr");
 			}
 		}
+		//TODO: try to check if we could make targeted updates on block placed/broken events
+		public void Update(PlayerState state)
+		{
 
-		//void Test(Registry registry, int color)
-		//{
-		//	var positions = registry.Positions[Coverage.Full];
-		//	Dictionary<BlockPos, int> faces = new(positions.Count);
-
-		//	MeshData meshData = new(positions.Count * 4 * 6, positions.Count * 6 * 6, false, false, true, false);
-
-		//	BlockPos start = positions[0].Copy();
-		//	var allFaces = BlockFacing.ALLFACES;
-
-		//	foreach (BlockPos position in positions)
-		//	{
-		//		int pattern = 0;
-		//		foreach (var face in allFaces)
-		//		{
-		//			if ()
-		//		}
-		//		faces[position] = pattern;
-
-		//		if (!faces.ContainsKey(blockPos3.AddCopy(BlockFacing.NORTH)))
-		//		{
-		//			num |= BlockFacing.NORTH.Flag;
-		//		}
-
-		//		if (!faces.ContainsKey(blockPos3.AddCopy(BlockFacing.EAST)))
-		//		{
-		//			num |= BlockFacing.EAST.Flag;
-		//		}
-
-		//		if (!faces.ContainsKey(blockPos3.AddCopy(BlockFacing.SOUTH)))
-		//		{
-		//			num |= BlockFacing.SOUTH.Flag;
-		//		}
-
-		//		if (!faces.ContainsKey(blockPos3.AddCopy(BlockFacing.WEST)))
-		//		{
-		//			num |= BlockFacing.WEST.Flag;
-		//		}
-
-		//		if (!faces.ContainsKey(blockPos3.AddCopy(BlockFacing.UP)))
-		//		{
-		//			num |= BlockFacing.UP.Flag;
-		//		}
-
-		//		if (!faces.ContainsKey(blockPos3.AddCopy(BlockFacing.DOWN)))
-		//		{
-		//			num |= BlockFacing.DOWN.Flag;
-		//		}
-
-		//		dictionary[blockPos3] = num;
-		//	}
-
-		//	var origin = blockPos.Copy();
-
-			
-		//	Vec3f vec3f = new Vec3f();
-		//	Vec3f sizeXyz = new Vec3f(1f, 1f, 1f);
-			
-		//	float[] defaultBlockSideShadingsByFacing = CubeMeshUtil.DefaultBlockSideShadingsByFacing;
-		//	foreach (KeyValuePair<BlockPos, int> item in dictionary)
-		//	{
-		//		int value = item.Value;
-		//		vec3f.X = (float)(item.Key.X - origin.X) + 0.5f;
-		//		vec3f.Y = (float)(item.Key.InternalY - origin.Y) + 0.5f;
-		//		vec3f.Z = (float)(item.Key.Z - origin.Z) + 0.5f;
-		//		for (int l = 0; l < 6; l++)
-		//		{
-		//			BlockFacing blockFacing = BlockFacing.ALLFACES[l];
-		//			if ((value & blockFacing.Flag) != 0)
-		//			{
-		//				ModelCubeUtilExt.AddFaceSkipTex(meshData, blockFacing, vec3f, sizeXyz, color, defaultBlockSideShadingsByFacing[blockFacing.Index]);
-		//			}
-		//		}
-		//	}
-		//	var modelRef = ApiHelper.Api.Render.UploadMesh(meshData);
-		//}
+		}
 
 		int GetColor(Coverage coverage) => coverage switch
 		{
@@ -135,19 +76,49 @@ namespace LightMyRod.Client
 			_ => throw new NotImplementedException()
 		};
 
-		static int GetChannel(Coverage coverage) => coverage switch
+		public void Unhi()
 		{
-			Coverage.Partial => 68,
-			Coverage.Full => 69,
-			_ => throw new NotImplementedException()
-		};
+			ApiHelper.Api.Event.UnregisterRenderer(this, EnumRenderStage.OIT);
 
-		public static void Unhi()
-		{
-			foreach (var coverage in Enum.GetValues<Coverage>())
+			foreach (var (coverage, visual) in _visuals)
 			{
-				ApiHelper.UnhiBlocks(GetChannel(coverage));
+				_visuals.Remove(coverage);
+				visual.Mesh.Dispose();
 			}
+		}
+
+		public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
+		{
+			if (_visuals.Count == 0)
+			{
+				return;
+			}
+
+			var highlighter = ShaderPrograms.Blockhighlights;
+			highlighter.Use();
+
+			foreach (var context in _visuals.Values)
+			{
+				ApiHelper.Api.Render.GlPushMatrix();
+				ApiHelper.Api.Render.GlLoadMatrix(ApiHelper.Api.Render.CameraMatrixOrigin);
+
+				var cameraPos = ApiHelper.Player.Entity.CameraPos;
+				ApiHelper.Api.Render.GlTranslate(context.Origin.X - cameraPos.X, context.Origin.Y - cameraPos.Y, context.Origin.Z - cameraPos.Z);
+
+				highlighter.ModelViewMatrix = ApiHelper.Api.Render.CurrentModelviewMatrix;
+				highlighter.ProjectionMatrix = ApiHelper.Api.Render.CurrentProjectionMatrix;
+
+				ApiHelper.Api.Render.RenderMesh(context.Mesh);
+				ApiHelper.Api.Render.GlPopMatrix();
+			}
+			highlighter.Stop();
+		}
+
+		public void Dispose()
+		{
+			Unhi();
+
+			GC.SuppressFinalize(this);
 		}
 	}
 }

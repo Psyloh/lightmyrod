@@ -1,14 +1,15 @@
 {
-    "$schema": "https://moddbcdn.vintagestory.at/schema/modinfo.latest.json",
-    "type": "Code",
-    "modid": "lightmyrod",
-    "name": "Light My Rod",
-    "authors": [
-        "Psyloh"
-    ],
-    "description": "Highlight your lightning rods' protective areas!",
-    "version": "0.2.0",
-    "dependencies": {
-        "game": "1.22.0-rc.6"
-    }
+	$schema: "https://moddbcdn.vintagestory.at/schema/modinfo.latest.json",
+	type: "Code",
+	modid: "lightmyrod",
+	name: "Light My Rod",
+	authors: [
+		"Psyloh"
+	],
+	description: "Highlight your lightning rods' protective areas!",
+	requiredOnServer: false,
+	version: "0.3.0",
+	dependencies: {
+		game: "1.22.0-rc.7"
+	}
 }
